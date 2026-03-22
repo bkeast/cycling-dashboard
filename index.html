@@ -79,39 +79,35 @@
           <div class="metric-label">Weekly elevation</div>
           <div class="metric-value" id="ov-elevation">—<span class="metric-unit">ft</span></div>
         </div>
+        <div class="metric-card">
+          <div class="metric-label">Today's steps</div>
+          <div class="metric-value" id="ov-steps">—<span class="metric-unit">steps</span></div>
+        </div>
       </div>
 
-      <div class="two-col">
+      <div class="two-col" style="margin-bottom:16px;">
         <div class="section-card">
-          <div class="section-head">Recent rides</div>
-          <div id="recent-rides-list"><div class="loading-msg">Loading rides from Strava...</div></div>
-        </div>
-        <div class="section-card">
-          <div class="section-head">Today's targets</div>
-          <div class="targets-list" id="today-targets">
-            <div class="target-row">
-              <span class="t-label">Calories</span>
-              <span class="t-value" id="t-cal">—</span>
-            </div>
-            <div class="target-row">
-              <span class="t-label">Protein</span>
-              <span class="t-value" id="t-protein">—</span>
-            </div>
-            <div class="target-row">
-              <span class="t-label">Carbs</span>
-              <span class="t-value" id="t-carbs">—</span>
-            </div>
-            <div class="target-row">
-              <span class="t-label">Fat</span>
-              <span class="t-value" id="t-fat">—</span>
-            </div>
-            <div class="target-row">
-              <span class="t-label">Ride type</span>
-              <span class="t-value" id="t-ridetype">Rest day</span>
-            </div>
+          <div class="section-head">Daily calorie breakdown</div>
+          <div id="calorie-summary">
+            <div style="font-size:13px; color:var(--text3);">Log meals and sync Apple Health to see your calorie balance.</div>
           </div>
-          <div class="target-note" id="target-note">Targets adjust automatically based on your Strava rides.</div>
         </div>
+        <div class="section-card">
+          <div class="section-head">Tomorrow's nutrition target</div>
+          <div class="targets-list" id="today-targets">
+            <div class="target-row"><span class="t-label">Calories</span><span class="t-value" id="t-cal">—</span></div>
+            <div class="target-row"><span class="t-label">Protein</span><span class="t-value" id="t-protein">—</span></div>
+            <div class="target-row"><span class="t-label">Carbs</span><span class="t-value" id="t-carbs">—</span></div>
+            <div class="target-row"><span class="t-label">Fat</span><span class="t-value" id="t-fat">—</span></div>
+            <div class="target-row"><span class="t-label">Ride type</span><span class="t-value" id="t-ridetype">—</span></div>
+          </div>
+          <div class="target-note" id="target-note">Targets adjust automatically based on your TrainingPeaks plan.</div>
+        </div>
+      </div>
+
+      <div class="section-card" style="margin-bottom:16px;">
+        <div class="section-head">Recent rides</div>
+        <div id="recent-rides-list"><div class="loading-msg">Loading rides from Strava...</div></div>
       </div>
 
       <div class="section-card" style="margin-top:16px">
