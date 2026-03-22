@@ -37,6 +37,7 @@ window.addEventListener('load', async () => {
     showConnect();
   }
   updateDaysLeft();
+  checkForWebhookWeight();
 });
 
 // ─── STRAVA OAUTH ─────────────────────────────────────────────────────────────
@@ -405,21 +406,52 @@ function addMealToLog() {
 }
 
 // ─── WEIGHT LOG ───────────────────────────────────────────────────────────────
-function logWeight() {
-  const val = parseFloat(document.getElementById('weight-input').value);
-  if (isNaN(val) || val < 100 || val > 400) return;
+function applyWeight(val, dateStr) {
   state.currentWeight = val;
   localStorage.setItem('current_weight', val);
-  const entry = { date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), weight: val };
-  state.weightLog.push(entry);
+  const label = dateStr || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const existing = state.weightLog.findIndex(w => w.date === label);
+  if (existing >= 0) state.weightLog[existing].weight = val;
+  else state.weightLog.push({ date: label, weight: val });
   localStorage.setItem('weight_log', JSON.stringify(state.weightLog));
-  document.getElementById('weight-input').value = '';
   const lost = Math.max(0, 200 - val);
   const pct = Math.min(100, (lost / 10) * 100);
   document.getElementById('prog-fill').style.width = pct + '%';
   document.getElementById('prog-label').textContent = lost.toFixed(1) + ' of 10 lbs lost (' + Math.round(pct) + '%)';
   updateOverviewMetrics();
   renderWeightChart();
+}
+
+function logWeight() {
+  const val = parseFloat(document.getElementById('weight-input').value);
+  if (isNaN(val) || val < 100 || val > 400) return;
+  document.getElementById('weight-input').value = '';
+  applyWeight(val, null);
+}
+
+async function checkForWebhookWeight() {
+  const lastChecked = localStorage.getItem('weight_webhook_checked');
+  const today = localDateStr(new Date());
+  if (lastChecked === today) return;
+  try {
+    const res = await fetch('/api/weight-latest');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.weight_lbs && data.date) {
+      const label = new Date(data.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      applyWeight(parseFloat(data.weight_lbs), label);
+      localStorage.setItem('weight_webhook_checked', today);
+      showWeightToast(data.weight_lbs, data.date);
+    }
+  } catch(e) { /* silent fail */ }
+}
+
+function showWeightToast(weight, date) {
+  const toast = document.createElement('div');
+  toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1e1f22;border:0.5px solid rgba(255,255,255,0.12);border-radius:10px;padding:12px 18px;font-size:13px;color:#f0f0ee;z-index:999;font-family:DM Sans,sans-serif;';
+  toast.innerHTML = '<span style="color:#4ade80">⬡</span> Garmin scale synced — <strong>' + parseFloat(weight).toFixed(1) + ' lbs</strong> on ' + date;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 5000);
 }
 
 function renderWeightChart() {
