@@ -28,6 +28,9 @@ let state = {
   meals: JSON.parse(localStorage.getItem('meals_today') || '[]'),
   weightLog: JSON.parse(localStorage.getItem('weight_log') || '[]'),
   currentWeight: parseFloat(localStorage.getItem('current_weight') || '200'),
+  todaySteps: parseInt(localStorage.getItem('today_steps') || '0'),
+  todayActiveCalories: parseInt(localStorage.getItem('today_active_calories') || '0'),
+  todayWorkoutCalories: 0,
   currentFTP: parseFloat(localStorage.getItem('current_ftp') || '268'),
   b64Image: null,
   pendingMeal: null,
@@ -52,6 +55,7 @@ window.addEventListener('load', async () => {
   }
   updateDaysLeft();
   checkForWebhookWeight();
+  await checkForActivityData();
   await loadTrainingPlan();
 });
 
@@ -186,6 +190,57 @@ function updateOverviewMetrics() {
   document.getElementById('ov-weight').innerHTML = state.currentWeight.toFixed(1) + '<span class="metric-unit">lbs</span>';
   const lost = Math.max(0, 200 - state.currentWeight);
   document.getElementById('ov-to-goal').innerHTML = (10 - lost).toFixed(1) + '<span class="metric-unit">lbs</span>';
+  if (state.todaySteps) document.getElementById('ov-steps').innerHTML = state.todaySteps.toLocaleString() + '<span class="metric-unit">steps</span>';
+  updateCalorieSummary();
+}
+
+function updateCalorieSummary() {
+  const basal = calcBasalCalories();
+  const active = state.todayActiveCalories || 0;
+  const workout = calcWorkoutCalories();
+  const total = basal + active + workout;
+  const eaten = getMealTotals().cal;
+  const net = Math.round(eaten - total);
+  const netColor = net < -600 ? '#f87171' : net < 0 ? '#4ade80' : net < 300 ? '#fbbf24' : '#f87171';
+
+  const el = document.getElementById('calorie-summary');
+  if (!el) return;
+  el.innerHTML =
+    '<div class="cal-breakdown">' +
+      '<div class="cal-row"><span>Basal (BMR)</span><span>' + basal.toLocaleString() + ' kcal</span></div>' +
+      '<div class="cal-row"><span>Active (walking)</span><span>' + active.toLocaleString() + ' kcal</span></div>' +
+      '<div class="cal-row"><span>Workout</span><span>' + workout.toLocaleString() + ' kcal</span></div>' +
+      '<div class="cal-row cal-total"><span>Total burn</span><span>' + total.toLocaleString() + ' kcal</span></div>' +
+      '<div class="cal-row cal-total"><span>Eaten</span><span>' + Math.round(eaten).toLocaleString() + ' kcal</span></div>' +
+      '<div class="cal-row" style="border-top: 1px solid rgba(255,255,255,0.1); margin-top:4px; padding-top:8px;">' +
+        '<span style="font-weight:500;">Net balance</span>' +
+        '<span style="color:' + netColor + '; font-weight:500;">' + (net > 0 ? '+' : '') + net.toLocaleString() + ' kcal</span>' +
+      '</div>' +
+    '</div>';
+}
+
+function calcBasalCalories() {
+  const w = state.currentWeight * 0.453592;
+  const h = 190.5;
+  const a = 47;
+  return Math.round(10 * w + 6.25 * h - 5 * a + 5);
+}
+
+function calcWorkoutCalories() {
+  const today = localDateStr(new Date());
+  const todayRides = state.activities.filter(a => a.start_date_local.startsWith(today));
+  let cal = 0;
+  for (const ride of todayRides) {
+    if (ride.kilojoules) cal += Math.round(ride.kilojoules * 0.239);
+    else if (ride.average_watts && ride.moving_time) cal += Math.round(ride.average_watts * ride.moving_time / 1000 * 0.239);
+  }
+  const tp = state.trainingPlan.filter(w => w.date === today && w.type === 'strength');
+  for (const s of tp) {
+    const hrs = s.duration || 1;
+    cal += Math.round(hrs * 300);
+  }
+  state.todayWorkoutCalories = cal;
+  return cal;
 }
 
 function localDateStr(d) {
@@ -327,7 +382,7 @@ function renderMealLog() {
 function removeMeal(i) {
   state.meals.splice(i, 1);
   localStorage.setItem('meals_today', JSON.stringify(state.meals));
-  renderMealLog(); renderMacroBars();
+  renderMealLog(); renderMacroBars(); updateCalorieSummary();
 }
 
 // ─── MEAL PHOTO ANALYSIS ──────────────────────────────────────────────────────
@@ -807,4 +862,34 @@ Be direct and coach-like. Don't sugarcoat.`;
   } catch(e) { console.error(e); }
   btn.textContent = 'Get adjustment advice ↗';
   btn.disabled = false;
+}
+
+// ─── ACTIVITY DATA (STEPS + ACTIVE CALORIES) ──────────────────────────────────
+async function checkForActivityData() {
+  const lastChecked = localStorage.getItem('activity_checked');
+  const today = localDateStr(new Date());
+  if (lastChecked === today) {
+    const steps = parseInt(localStorage.getItem('today_steps') || '0');
+    const cal = parseInt(localStorage.getItem('today_active_calories') || '0');
+    if (steps) state.todaySteps = steps;
+    if (cal) state.todayActiveCalories = cal;
+    return;
+  }
+  try {
+    const res = await fetch('/api/activity');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.date === today) {
+      if (data.steps) {
+        state.todaySteps = data.steps;
+        localStorage.setItem('today_steps', data.steps);
+      }
+      if (data.active_calories) {
+        state.todayActiveCalories = data.active_calories;
+        localStorage.setItem('today_active_calories', data.active_calories);
+      }
+      localStorage.setItem('activity_checked', today);
+      updateOverviewMetrics();
+    }
+  } catch(e) { /* silent fail */ }
 }
