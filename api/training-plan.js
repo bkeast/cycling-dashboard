@@ -1,3 +1,5 @@
+import https from 'https';
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -7,54 +9,63 @@ export default async function handler(req, res) {
 
   try {
     const icalUrl = process.env.TRAININGPEAKS_ICAL_URL;
-    if (!icalUrl) return res.status(500).json({ error: 'iCal URL not configured' });
+    if (!icalUrl) {
+      return res.status(500).json({ error: 'TRAININGPEAKS_ICAL_URL not set' });
+    }
 
-    const response = await fetch(icalUrl.replace('webcal://', 'https://'));
-    if (!response.ok) return res.status(502).json({ error: 'Could not fetch TrainingPeaks calendar' });
+    const fetchUrl = icalUrl.replace('webcal://', 'https://');
 
-    const text = await response.text();
+    const text = await fetchUrl_(fetchUrl);
+
+    if (!text || text.length < 50) {
+      return res.status(502).json({ error: 'Empty iCal response', length: text ? text.length : 0 });
+    }
+
     const events = parseICal(text);
 
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json({ events, total: events.length, debug_dates: events.map(e => e.date) });
+    return res.status(200).json({
+      events,
+      total: events.length,
+      debug_dates: events.map(e => e.date)
+    });
+
   } catch (err) {
-    return res.status(500).json({ error: 'Server error', detail: err.message });
+    return res.status(500).json({ error: err.message, stack: err.stack });
   }
+}
+
+function fetchUrl_(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, (resp) => {
+      if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
+        return fetchUrl_(resp.headers.location).then(resolve).catch(reject);
+      }
+      let data = '';
+      resp.on('data', chunk => data += chunk);
+      resp.on('end', () => resolve(data));
+      resp.on('error', reject);
+    }).on('error', reject);
+  });
 }
 
 function parseICal(text) {
   const events = [];
-  // Unfold iCal lines (RFC 5545: folded lines start with space or tab)
-  const unfolded = text.replace(/
-[ 	]/g, '').replace(/
-[ 	]/g, '');
+  const unfolded = text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '');
   const blocks = unfolded.split('BEGIN:VEVENT');
   blocks.shift();
 
   for (const block of blocks) {
-    const get = (key) => {
-      const patterns = [
-        new RegExp(`${key};[^:]*:([^\\r\\n]+)`),
-        new RegExp(`${key}:([^\\r\\n]+)`)
-      ];
-      for (const p of patterns) {
-        const m = block.match(p);
-        if (m) return m[1].trim();
-      }
-      return null;
-    };
-
-    const dtstart = get('DTSTART');
-    const summary = get('SUMMARY');
-    const description = get('DESCRIPTION');
-    const uid = get('UID');
+    const dtstart = getField(block, 'DTSTART');
+    const summary = getField(block, 'SUMMARY');
+    const description = getField(block, 'DESCRIPTION');
+    const uid = getField(block, 'UID');
 
     if (!dtstart || !summary) continue;
-
     const date = parseICalDate(dtstart);
     if (!date) continue;
 
-    const workout = {
+    events.push({
       uid,
       date,
       title: decodeICal(summary),
@@ -63,39 +74,37 @@ function parseICal(text) {
       tss: extractTSS(description),
       duration: extractDuration(description),
       completed: false
-    };
-
-    events.push(workout);
+    });
   }
 
-  return events.sort((a, b) => new Date(a.date) - new Date(b.date));
+  return events.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+function getField(block, key) {
+  const m = block.match(new RegExp(key + ';[^:]*:([^\r\n]+)')) ||
+            block.match(new RegExp(key + ':([^\r\n]+)'));
+  return m ? m[1].trim() : null;
 }
 
 function parseICalDate(str) {
   if (!str) return null;
   const clean = str.replace(/[TZ]/g, '').substring(0, 8);
   if (clean.length < 8) return null;
-  return `${clean.substring(0,4)}-${clean.substring(4,6)}-${clean.substring(6,8)}`;
+  return clean.substring(0,4) + '-' + clean.substring(4,6) + '-' + clean.substring(6,8);
 }
 
 function decodeICal(str) {
-  return str
-    .replace(/\\n/g, ' ')
-    .replace(/\\,/g, ',')
-    .replace(/\\;/g, ';')
-    .replace(/\\\\/g, '\\')
-    .replace(/\r/g, '')
-    .trim();
+  return str.replace(/\\n/g, ' ').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\').replace(/\r/g, '').trim();
 }
 
 function detectWorkoutType(summary, description) {
   const text = ((summary || '') + ' ' + (description || '')).toLowerCase();
   if (text.includes('strength') || text.includes('weight') || text.includes('gym')) return 'strength';
-  if (text.includes('rest') || text.includes('recovery') || text.includes('off')) return 'rest';
+  if (text.includes('rest') || text.includes('day off')) return 'rest';
   if (text.includes('interval') || text.includes('vo2') || text.includes('threshold')) return 'intervals';
   if (text.includes('endurance') || text.includes('z2') || text.includes('base')) return 'endurance';
   if (text.includes('tempo')) return 'tempo';
-  if (text.includes('test') || text.includes('ftp')) return 'test';
+  if (text.includes('test') || text.includes('ftp') || text.includes('ramp') || text.includes('monty')) return 'test';
   return 'ride';
 }
 
@@ -107,8 +116,9 @@ function extractTSS(description) {
 
 function extractDuration(description) {
   if (!description) return null;
-  const m = description.match(/(\d+\.?\d*)\s*(?:hr|hour|h\b)/i) ||
-            description.match(/(\d+)\s*(?:min|minute)/i);
-  if (!m) return null;
-  return description.match(/min/i) ? Math.round(parseInt(m[1]) / 60 * 10) / 10 : parseFloat(m[1]);
+  const mh = description.match(/(\d+\.?\d*)\s*(?:hr|hour|h\b)/i);
+  if (mh) return parseFloat(mh[1]);
+  const mm = description.match(/(\d+)\s*(?:min|minute)/i);
+  if (mm) return Math.round(parseInt(mm[1]) / 60 * 10) / 10;
+  return null;
 }
