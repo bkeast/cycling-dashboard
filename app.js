@@ -1,0 +1,506 @@
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+const STRAVA_CLIENT_ID = '214744';
+const REDIRECT_URI = window.location.origin + window.location.pathname;
+ 
+const ATHLETE_PROFILE = {
+  weightLbs: 200, heightIn: 75, age: 47,
+  goalWeightLbs: 190, goalDate: '2026-06-20',
+  sport: 'road cycling', trainingDays: 5
+};
+ 
+// ─── STATE ────────────────────────────────────────────────────────────────────
+let state = {
+  accessToken: localStorage.getItem('strava_token'),
+  athlete: JSON.parse(localStorage.getItem('strava_athlete') || 'null'),
+  activities: JSON.parse(localStorage.getItem('strava_activities') || '[]'),
+  meals: JSON.parse(localStorage.getItem('meals_today') || '[]'),
+  weightLog: JSON.parse(localStorage.getItem('weight_log') || '[]'),
+  currentWeight: parseFloat(localStorage.getItem('current_weight') || '200'),
+  b64Image: null,
+  pendingMeal: null,
+  weightChart: null,
+  trainingChart: null
+};
+ 
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+window.addEventListener('load', async () => {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+ 
+  if (code) {
+    window.history.replaceState({}, '', window.location.pathname);
+    await exchangeCode(code);
+  } else if (state.accessToken) {
+    showDashboard();
+    await loadActivities();
+  } else {
+    showConnect();
+  }
+  updateDaysLeft();
+});
+ 
+// ─── STRAVA OAUTH ─────────────────────────────────────────────────────────────
+function connectStrava() {
+  const scope = 'read,activity:read_all';
+  const url = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${scope}`;
+  window.location.href = url;
+}
+ 
+async function exchangeCode(code) {
+  try {
+    const res = await fetch('/api/strava-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      state.accessToken = data.access_token;
+      state.athlete = data.athlete;
+      localStorage.setItem('strava_token', data.access_token);
+      localStorage.setItem('strava_athlete', JSON.stringify(data.athlete));
+      showDashboard();
+      await loadActivities();
+    } else {
+      alert('Could not connect to Strava. Please try again.');
+      showConnect();
+    }
+  } catch (e) {
+    console.error(e);
+    showConnect();
+  }
+}
+ 
+function disconnect() {
+  localStorage.removeItem('strava_token');
+  localStorage.removeItem('strava_athlete');
+  localStorage.removeItem('strava_activities');
+  state.accessToken = null; state.athlete = null; state.activities = [];
+  showConnect();
+}
+ 
+// ─── SHOW/HIDE ─────────────────────────────────────────────────────────────────
+function showConnect() {
+  document.getElementById('connect-state').style.display = 'flex';
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('connect-btn').style.display = 'flex';
+  document.getElementById('disconnect-btn').style.display = 'none';
+  document.getElementById('athlete-pill').style.display = 'none';
+}
+ 
+function showDashboard() {
+  document.getElementById('connect-state').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  document.getElementById('connect-btn').style.display = 'none';
+  document.getElementById('disconnect-btn').style.display = 'block';
+  if (state.athlete) {
+    document.getElementById('athlete-pill').style.display = 'flex';
+    document.getElementById('athlete-name').textContent = state.athlete.firstname + ' ' + state.athlete.lastname;
+  }
+  renderMacroBars();
+  renderMealLog();
+  renderWeightChart();
+  updateTargets();
+}
+ 
+// ─── STRAVA ACTIVITIES ────────────────────────────────────────────────────────
+async function loadActivities() {
+  if (!state.accessToken) return;
+  try {
+    const after = Math.floor((Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000);
+    const res = await fetch(`https://www.strava.com/api/v3/athlete/activities?per_page=30&after=${after}`, {
+      headers: { 'Authorization': `Bearer ${state.accessToken}` }
+    });
+    if (res.status === 401) { disconnect(); return; }
+    const acts = await res.json();
+    state.activities = acts.filter(a => a.type === 'Ride' || a.sport_type === 'Ride' || a.type === 'VirtualRide');
+    localStorage.setItem('strava_activities', JSON.stringify(state.activities));
+    renderActivities();
+    updateOverviewMetrics();
+    updateTargets();
+    renderTrainingChart();
+  } catch (e) {
+    console.error('Strava fetch error:', e);
+  }
+}
+ 
+function renderActivities() {
+  const recent = state.activities.slice(0, 5);
+  const all = state.activities.slice(0, 15);
+ 
+  const buildItem = a => {
+    const dist = (a.distance / 1609.34).toFixed(1);
+    const elev = Math.round(a.total_elevation_gain * 3.28084);
+    const date = new Date(a.start_date_local).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const dur = formatDuration(a.moving_time);
+    const power = a.average_watts ? `${Math.round(a.average_watts)}w avg` : '';
+    return `<div class="ride-item">
+      <div>
+        <div class="ride-name">${a.name}</div>
+        <div class="ride-meta">${date} · ${dur}${power ? ' · ' + power : ''}</div>
+      </div>
+      <div class="ride-stats">
+        <div class="ride-dist">${dist} mi</div>
+        <div class="ride-elev">+${elev.toLocaleString()} ft</div>
+      </div>
+    </div>`;
+  };
+ 
+  const recentEl = document.getElementById('recent-rides-list');
+  const allEl = document.getElementById('all-rides-list');
+  if (recent.length === 0) {
+    recentEl.innerHTML = '<div class="empty-msg">No rides in the last 30 days.</div>';
+    allEl.innerHTML = '<div class="empty-msg">No rides found.</div>';
+  } else {
+    recentEl.innerHTML = recent.map(buildItem).join('');
+    allEl.innerHTML = all.map(buildItem).join('');
+  }
+}
+ 
+function updateOverviewMetrics() {
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const thisWeek = state.activities.filter(a => new Date(a.start_date_local).getTime() > weekAgo);
+  const totalDist = thisWeek.reduce((s, a) => s + a.distance, 0);
+  const totalElev = thisWeek.reduce((s, a) => s + a.total_elevation_gain, 0);
+ 
+  document.getElementById('ov-rides').textContent = thisWeek.length;
+  document.getElementById('ov-distance').textContent = (totalDist / 1609.34).toFixed(0);
+  document.getElementById('ov-elevation').textContent = Math.round(totalElev * 3.28084).toLocaleString();
+  document.getElementById('ov-weight').innerHTML = state.currentWeight.toFixed(1) + '<span class="metric-unit">lbs</span>';
+  const lost = Math.max(0, 200 - state.currentWeight);
+  document.getElementById('ov-to-goal').innerHTML = (10 - lost).toFixed(1) + '<span class="metric-unit">lbs</span>';
+}
+ 
+function updateTargets() {
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const todayRide = state.activities.find(a => a.start_date_local.startsWith(todayStr));
+  const yesterdayStr = new Date(today - 86400000).toISOString().split('T')[0];
+  const yesterdayRide = state.activities.find(a => a.start_date_local.startsWith(yesterdayStr));
+  const activeRide = todayRide || yesterdayRide;
+ 
+  let cal, protein, carbs, fat, rideType;
+ 
+  if (activeRide) {
+    const dist = activeRide.distance / 1609.34;
+    if (dist > 60) {
+      cal = 3200; protein = 175; carbs = 420; fat = 70;
+      rideType = `Long ride (${dist.toFixed(0)} mi)`;
+    } else if (dist > 30) {
+      cal = 2880; protein = 175; carbs = 330; fat = 70;
+      rideType = `Training ride (${dist.toFixed(0)} mi)`;
+    } else {
+      cal = 2680; protein = 175; carbs = 295; fat = 65;
+      rideType = `Easy ride (${dist.toFixed(0)} mi)`;
+    }
+  } else {
+    cal = 2200; protein = 175; carbs = 200; fat = 65;
+    rideType = 'Rest / recovery day';
+  }
+ 
+  window._targets = { cal, protein, carbs, fat };
+ 
+  document.getElementById('t-cal').textContent = cal.toLocaleString() + ' kcal';
+  document.getElementById('t-protein').textContent = protein + 'g';
+  document.getElementById('t-carbs').textContent = carbs + 'g';
+  document.getElementById('t-fat').textContent = fat + 'g';
+  document.getElementById('t-ridetype').textContent = rideType;
+  document.getElementById('cal-target').value = cal;
+  renderMacroBars();
+}
+ 
+function renderTrainingChart() {
+  const days = [];
+  const distances = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const ds = d.toISOString().split('T')[0];
+    days.push(d.toLocaleDateString('en-US', { weekday: 'short' }));
+    const dayRides = state.activities.filter(a => a.start_date_local.startsWith(ds));
+    distances.push(+(dayRides.reduce((s, a) => s + a.distance / 1609.34, 0)).toFixed(1));
+  }
+ 
+  const ctx = document.getElementById('trainingChart').getContext('2d');
+  if (state.trainingChart) state.trainingChart.destroy();
+  state.trainingChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: days,
+      datasets: [{
+        label: 'Miles',
+        data: distances,
+        backgroundColor: 'rgba(232,255,71,0.7)',
+        borderRadius: 4,
+        borderSkipped: false
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { color: '#5a5955', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        x: { ticks: { color: '#5a5955', font: { size: 11 } }, grid: { display: false } }
+      }
+    }
+  });
+}
+ 
+// ─── NUTRITION ────────────────────────────────────────────────────────────────
+const DEFAULT_TARGETS = { cal: 2680, protein: 175, carbs: 295, fat: 65 };
+ 
+function getTargets() {
+  return window._targets || DEFAULT_TARGETS;
+}
+ 
+function renderMacroBars() {
+  const t = getTargets();
+  const totals = getMealTotals();
+  const macros = [
+    { name: 'Protein', key: 'protein', target: t.protein, color: '#4ade80', unit: 'g' },
+    { name: 'Carbs', key: 'carbs', target: t.carbs, color: '#60a5fa', unit: 'g' },
+    { name: 'Fat', key: 'fat', target: t.fat, color: '#fbbf24', unit: 'g' }
+  ];
+  document.getElementById('macro-bars').innerHTML = macros.map(m => {
+    const pct = Math.min(100, Math.round((totals[m.key] / m.target) * 100));
+    return `<div class="macro-bar-row">
+      <div class="macro-bar-head">
+        <span class="macro-bar-name">${m.name}</span>
+        <span class="macro-bar-nums">${Math.round(totals[m.key])}${m.unit} / ${m.target}${m.unit}</span>
+      </div>
+      <div class="macro-track"><div class="macro-fill" style="width:${pct}%; background:${m.color}"></div></div>
+    </div>`;
+  }).join('');
+  const remaining = Math.max(0, t.cal - Math.round(totals.cal));
+  document.getElementById('logged-cals').textContent = Math.round(totals.cal).toLocaleString();
+  document.getElementById('remaining-cals').textContent = remaining.toLocaleString();
+}
+ 
+function getMealTotals() {
+  return state.meals.reduce((a, m) => ({
+    cal: a.cal + m.cal, protein: a.protein + m.protein,
+    carbs: a.carbs + m.carbs, fat: a.fat + m.fat
+  }), { cal: 0, protein: 0, carbs: 0, fat: 0 });
+}
+ 
+function renderMealLog() {
+  const el = document.getElementById('meal-log-list');
+  if (state.meals.length === 0) {
+    el.innerHTML = '<div class="empty-msg">No meals logged today.</div>'; return;
+  }
+  el.innerHTML = state.meals.map((m, i) => `
+    <div class="meal-log-item">
+      <div>
+        <div class="meal-log-name">${m.name}</div>
+        <div class="meal-log-macros">${Math.round(m.protein)}g P · ${Math.round(m.carbs)}g C · ${Math.round(m.fat)}g F</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:4px;">
+        <span class="meal-log-cals">${Math.round(m.cal)}</span>
+        <button class="meal-remove-btn" onclick="removeMeal(${i})">✕</button>
+      </div>
+    </div>`).join('');
+}
+ 
+function removeMeal(i) {
+  state.meals.splice(i, 1);
+  localStorage.setItem('meals_today', JSON.stringify(state.meals));
+  renderMealLog(); renderMacroBars();
+}
+ 
+// ─── MEAL PHOTO ANALYSIS ──────────────────────────────────────────────────────
+function handleMealFile(input) {
+  const file = input.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = document.getElementById('meal-preview');
+    img.src = e.target.result; img.style.display = 'block';
+    state.b64Image = e.target.result.split(',')[1];
+    document.getElementById('meal-notes').style.display = 'block';
+    document.getElementById('analyze-btn').style.display = 'block';
+    document.getElementById('meal-result').innerHTML = '';
+  };
+  reader.readAsDataURL(file);
+}
+ 
+async function analyzeMeal() {
+  if (!state.b64Image) return;
+  const notes = document.getElementById('meal-notes').value;
+  const t = getTargets();
+  document.getElementById('analyze-btn').style.display = 'none';
+  document.getElementById('meal-loading').style.display = 'block';
+ 
+  const prompt = `You are a sports nutrition expert for endurance athletes. Analyze this meal photo.
+ 
+Athlete: 47yo male road cyclist, 200 lbs, 6'3". Goal: body recomposition (lose fat, gain muscle). Target 190 lbs by June 20 2026. Training 5-6 days/week.
+Today's targets: ${t.cal} kcal, ${t.protein}g protein, ${t.carbs}g carbs, ${t.fat}g fat.
+${notes ? 'User notes: ' + notes : ''}
+ 
+Respond ONLY with valid JSON (no markdown, no explanation):
+{"meal_name":"short name","calories":number,"protein_g":number,"carbs_g":number,"fat_g":number,"quality_score":number,"highlights":["positive 1","positive 2"],"improvements":["improvement 1","improvement 2"],"cycling_note":"one sentence on fit with training"}`;
+ 
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: state.b64Image } },
+          { type: 'text', text: prompt }
+        ]}]
+      })
+    });
+    const data = await res.json();
+    const text = data.content.map(c => c.text || '').join('');
+    const meal = JSON.parse(text.replace(/```json|```/g, '').trim());
+    state.pendingMeal = meal;
+ 
+    const scoreColor = meal.quality_score >= 7 ? '#4ade80' : meal.quality_score >= 5 ? '#fbbf24' : '#f87171';
+    document.getElementById('meal-result').innerHTML = `
+      <div class="meal-result-card">
+        <div class="meal-result-head">
+          <span class="meal-result-name">${meal.meal_name}</span>
+          <span class="meal-score" style="color:${scoreColor}">${meal.quality_score}/10</span>
+        </div>
+        <div class="meal-macros-grid">
+          <div class="mmg-cell"><div class="mmg-label">Calories</div><div class="mmg-val">${Math.round(meal.calories)}</div></div>
+          <div class="mmg-cell"><div class="mmg-label">Protein</div><div class="mmg-val">${Math.round(meal.protein_g)}g</div></div>
+          <div class="mmg-cell"><div class="mmg-label">Carbs</div><div class="mmg-val">${Math.round(meal.carbs_g)}g</div></div>
+          <div class="mmg-cell"><div class="mmg-label">Fat</div><div class="mmg-val">${Math.round(meal.fat_g)}g</div></div>
+        </div>
+        <div class="meal-note">${meal.cycling_note}</div>
+        <div class="feedback-row">
+          <div class="feedback-pos">${meal.highlights.map(h => '+ ' + h).join('<br>')}</div>
+          <div class="feedback-neg">${meal.improvements.map(i => '→ ' + i).join('<br>')}</div>
+        </div>
+        <button class="add-meal-btn" onclick="addMealToLog()">+ Add to today's log</button>
+      </div>`;
+  } catch(e) {
+    document.getElementById('meal-result').innerHTML = '<div style="color:#f87171; font-size:13px; padding:8px 0;">Could not analyze meal. Please try again.</div>';
+  }
+  document.getElementById('meal-loading').style.display = 'none';
+}
+ 
+function addMealToLog() {
+  if (!state.pendingMeal) return;
+  const m = state.pendingMeal;
+  state.meals.push({ name: m.meal_name, cal: m.calories, protein: m.protein_g, carbs: m.carbs_g, fat: m.fat_g });
+  localStorage.setItem('meals_today', JSON.stringify(state.meals));
+  state.pendingMeal = null; state.b64Image = null;
+  document.getElementById('meal-preview').style.display = 'none';
+  document.getElementById('meal-result').innerHTML = '';
+  document.getElementById('analyze-btn').style.display = 'none';
+  document.getElementById('meal-notes').style.display = 'none';
+  document.getElementById('meal-notes').value = '';
+  document.getElementById('meal-file').value = '';
+  renderMealLog(); renderMacroBars();
+}
+ 
+// ─── WEIGHT LOG ───────────────────────────────────────────────────────────────
+function logWeight() {
+  const val = parseFloat(document.getElementById('weight-input').value);
+  if (isNaN(val) || val < 100 || val > 400) return;
+  state.currentWeight = val;
+  localStorage.setItem('current_weight', val);
+  const entry = { date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), weight: val };
+  state.weightLog.push(entry);
+  localStorage.setItem('weight_log', JSON.stringify(state.weightLog));
+  document.getElementById('weight-input').value = '';
+  const lost = Math.max(0, 200 - val);
+  const pct = Math.min(100, (lost / 10) * 100);
+  document.getElementById('prog-fill').style.width = pct + '%';
+  document.getElementById('prog-label').textContent = lost.toFixed(1) + ' of 10 lbs lost (' + Math.round(pct) + '%)';
+  updateOverviewMetrics();
+  renderWeightChart();
+}
+ 
+function renderWeightChart() {
+  const today = new Date();
+  const labels = [], goalLine = [];
+  for (let i = 0; i <= 13; i++) {
+    const d = new Date(today); d.setDate(d.getDate() + i * 7);
+    labels.push(d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+    goalLine.push(+(200 - (10 / 13) * i).toFixed(1));
+  }
+  const actualData = [state.currentWeight, ...state.weightLog.slice(-12).map(w => w.weight)];
+ 
+  const ctx = document.getElementById('weightChart').getContext('2d');
+  if (state.weightChart) state.weightChart.destroy();
+  state.weightChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Goal', data: goalLine, borderColor: '#e8ff47', borderDash: [4, 4], pointRadius: 0, borderWidth: 1.5, tension: 0 },
+        { label: 'Actual', data: actualData, borderColor: '#60a5fa', borderWidth: 2, pointRadius: 4, pointBackgroundColor: '#60a5fa', tension: 0.3 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { min: 185, max: 205, ticks: { color: '#5a5955', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        x: { ticks: { color: '#5a5955', font: { size: 11 }, maxRotation: 45, autoSkip: true, maxTicksLimit: 7 }, grid: { display: false } }
+      }
+    }
+  });
+}
+ 
+// ─── AI INSIGHT ───────────────────────────────────────────────────────────────
+async function getInsight() {
+  document.getElementById('ai-insight-box').innerHTML = '<div class="loading-msg">Generating coaching insight...</div>';
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const thisWeek = state.activities.filter(a => new Date(a.start_date_local).getTime() > weekAgo);
+  const totalMiles = (thisWeek.reduce((s, a) => s + a.distance, 0) / 1609.34).toFixed(0);
+  const totalElev = Math.round(thisWeek.reduce((s, a) => s + a.total_elevation_gain, 0) * 3.28084);
+  const avgPower = thisWeek.filter(a => a.average_watts).reduce((s, a, _, arr) => s + a.average_watts / arr.length, 0);
+  const t = getTargets();
+  const totals = getMealTotals();
+ 
+  const prompt = `You are a cycling coach and sports nutritionist. Give a concise, practical daily coaching insight (3-4 sentences max).
+ 
+Athlete: 47yo male road cyclist, ${state.currentWeight} lbs (goal: 190 lbs by Jun 20, 2026). Body recomposition goal.
+This week: ${thisWeek.length} rides, ${totalMiles} miles, ${totalElev.toLocaleString()} ft elevation${avgPower > 0 ? ', avg power ' + Math.round(avgPower) + 'w' : ''}.
+Today's nutrition target: ${t.cal} kcal, ${t.protein}g protein, ${t.carbs}g carbs.
+Today's logged: ${Math.round(totals.cal)} kcal, ${Math.round(totals.protein)}g protein so far.
+ 
+Give one specific, actionable insight for today based on this data. Be direct and practical, like a real coach.`;
+ 
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514', max_tokens: 300,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content.map(c => c.text || '').join('');
+    document.getElementById('ai-insight-box').innerHTML = `<div class="insight-text">${text}</div>
+      <button class="insight-btn" style="margin-top:12px" onclick="getInsight()">Refresh ↗</button>`;
+  } catch(e) {
+    document.getElementById('ai-insight-box').innerHTML = '<button class="insight-btn" onclick="getInsight()">Generate today\'s coaching insight ↗</button>';
+  }
+}
+ 
+// ─── UI HELPERS ───────────────────────────────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+ 
+function updateDaysLeft() {
+  const days = Math.max(0, Math.ceil((new Date('2026-06-20') - new Date()) / 86400000));
+  document.getElementById('ov-days').innerHTML = days + '<span class="metric-unit">days</span>';
+}
+ 
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+ 
