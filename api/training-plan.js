@@ -15,8 +15,8 @@ export default async function handler(req, res) {
     const text = await response.text();
     const events = parseICal(text);
 
-    res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate');
-    return res.status(200).json({ events });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json({ events, total: events.length, debug_dates: events.map(e => e.date) });
   } catch (err) {
     return res.status(500).json({ error: 'Server error', detail: err.message });
   }
@@ -24,7 +24,11 @@ export default async function handler(req, res) {
 
 function parseICal(text) {
   const events = [];
-  const blocks = text.split('BEGIN:VEVENT');
+  // Unfold iCal lines (RFC 5545: folded lines start with space or tab)
+  const unfolded = text.replace(/
+[ 	]/g, '').replace(/
+[ 	]/g, '');
+  const blocks = unfolded.split('BEGIN:VEVENT');
   blocks.shift();
 
   for (const block of blocks) {
