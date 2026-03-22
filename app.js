@@ -627,15 +627,37 @@ function updateTargetsFromPlan() {
   renderMacroBars();
 }
 
+function getWeekStart(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = (day === 0) ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
 function renderTrainingPlan() {
   const el = document.getElementById('training-plan-panel');
   if (!el) return;
 
   const today = getTodayStr();
+
+  const weekStarts = [];
+  const thisMonday = getWeekStart(new Date());
+  for (let w = -1; w <= 3; w++) {
+    const d = new Date(thisMonday);
+    d.setDate(d.getDate() + w * 7);
+    weekStarts.push(d);
+  }
+
   const days = [];
-  for (let i = -1; i <= 13; i++) {
-    const d = new Date(); d.setDate(d.getDate() + i);
-    days.push(localDateStr(d));
+  for (const weekStart of weekStarts) {
+    const week = [];
+    for (let d = 0; d < 7; d++) {
+      const day = new Date(weekStart);
+      day.setDate(day.getDate() + d);
+      week.push(localDateStr(day));
+    }
+    days.push(week);
   }
 
   const missed = state.trainingPlan.filter(w => isMissed(w));
@@ -649,37 +671,44 @@ function renderTrainingPlan() {
     </div>`;
   }
 
-  html += '<div class="plan-calendar">';
-  for (const dateStr of days) {
-    const workouts = getWorkoutsForDate(dateStr);
-    const isToday = dateStr === today;
-    const isPast = dateStr < today;
-    const d = new Date(dateStr + 'T12:00:00');
-    const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-
-    const completedOnDay = state.activities.some(a => a.start_date_local.startsWith(dateStr));
-
-    html += `<div class="plan-day ${isToday ? 'plan-day-today' : ''} ${isPast ? 'plan-day-past' : ''}">
-      <div class="plan-day-label">${isToday ? 'TODAY' : dayLabel}</div>`;
-
-    if (workouts.length === 0) {
-      html += `<div class="plan-workout plan-rest">Rest</div>`;
-    } else {
-      for (const w of workouts) {
-        const missed = isMissed(w);
-        const done = isPast && completedOnDay;
-        const typeColor = { intervals:'#e8ff47', tempo:'#60a5fa', endurance:'#4ade80', strength:'#f87171', rest:'#5a5955', ride:'#4ade80', test:'#fbbf24' }[w.type] || '#9a9994';
-        html += `<div class="plan-workout" style="border-left: 2px solid ${typeColor}; ${missed ? 'opacity:0.5' : ''}">
-          <div style="font-size:12px; font-weight:500; color:${typeColor};">${w.type.toUpperCase()}${done ? ' ✓' : missed ? ' ✗' : ''}</div>
-          <div style="font-size:12px; color:#f0f0ee; margin-top:2px;">${w.title}</div>
-          ${w.tss ? `<div style="font-size:11px; color:#5a5955; margin-top:2px;">TSS ~${w.tss}</div>` : ''}
-          ${w.duration ? `<div style="font-size:11px; color:#5a5955;">${w.duration}hr</div>` : ''}
-        </div>`;
+  const DAY_HEADERS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  for (const week of days) {
+    const weekStart = new Date(week[0] + 'T12:00:00');
+    const weekEnd = new Date(week[6] + 'T12:00:00');
+    const wLabel = weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' – ' + weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    html += '<div class="plan-week-label">' + wLabel + '</div>';
+    html += '<div class="plan-calendar">';
+    for (let i = 0; i < 7; i++) {
+      const dateStr = week[i];
+      const workouts = getWorkoutsForDate(dateStr);
+      const isToday = dateStr === today;
+      const isPast = dateStr < today;
+      const d = new Date(dateStr + 'T12:00:00');
+      const dayNum = d.getDate();
+      const completedOnDay = state.activities.some(a => a.start_date_local.startsWith(dateStr));
+      html += '<div class="plan-day' + (isToday ? ' plan-day-today' : '') + (isPast ? ' plan-day-past' : '') + '">';
+      html += '<div class="plan-day-label">' + (isToday ? 'TODAY' : DAY_HEADERS[i] + ' ' + dayNum) + '</div>';
+      if (workouts.length === 0) {
+        html += '<div class="plan-workout plan-rest">Rest</div>';
+      } else {
+        for (const w of workouts) {
+          const wasMissed = isMissed(w);
+          const done = isPast && completedOnDay;
+          const typeColors = { intervals:'#e8ff47', tempo:'#60a5fa', endurance:'#4ade80', strength:'#f87171', rest:'#5a5955', ride:'#4ade80', test:'#fbbf24' };
+          const tc = typeColors[w.type] || '#9a9994';
+          let whtml = '<div class="plan-workout" style="border-left: 2px solid ' + tc + '; ' + (wasMissed ? 'opacity:0.5' : '') + '">';
+          whtml += '<div style="font-size:12px; font-weight:500; color:' + tc + ';">' + w.type.toUpperCase() + (done ? ' ✓' : wasMissed ? ' ✗' : '') + '</div>';
+          whtml += '<div style="font-size:12px; color:#f0f0ee; margin-top:2px;">' + w.title + '</div>';
+          if (w.tss) whtml += '<div style="font-size:11px; color:#5a5955; margin-top:2px;">TSS ~' + w.tss + '</div>';
+          if (w.duration) whtml += '<div style="font-size:11px; color:#5a5955;">' + w.duration + 'hr</div>';
+          whtml += '</div>';
+          html += whtml;
+        }
       }
+      html += '</div>';
     }
     html += '</div>';
   }
-  html += '</div>';
 
   html += `<div style="margin-top:16px;">
     <div class="section-head">FTP progression</div>
