@@ -125,8 +125,9 @@ async function loadActivities() {
 }
 
 function renderActivities() {
-  const recent = state.activities.slice(0, 5);
-  const all = state.activities.slice(0, 15);
+  const sorted = [...state.activities].sort((a, b) => new Date(b.start_date_local) - new Date(a.start_date_local));
+  const recent = sorted.slice(0, 5);
+  const all = sorted.slice(0, 15);
 
   const buildItem = a => {
     const dist = (a.distance / 1609.34).toFixed(1);
