@@ -1,13 +1,13 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const STRAVA_CLIENT_ID = '214744';
 const REDIRECT_URI = window.location.origin + window.location.pathname;
- 
+
 const ATHLETE_PROFILE = {
   weightLbs: 200, heightIn: 75, age: 47,
   goalWeightLbs: 190, goalDate: '2026-06-20',
   sport: 'road cycling', trainingDays: 5
 };
- 
+
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let state = {
   accessToken: localStorage.getItem('strava_token'),
@@ -21,12 +21,12 @@ let state = {
   weightChart: null,
   trainingChart: null
 };
- 
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
- 
+
   if (code) {
     window.history.replaceState({}, '', window.location.pathname);
     await exchangeCode(code);
@@ -38,14 +38,14 @@ window.addEventListener('load', async () => {
   }
   updateDaysLeft();
 });
- 
+
 // ─── STRAVA OAUTH ─────────────────────────────────────────────────────────────
 function connectStrava() {
   const scope = 'read,activity:read_all';
   const url = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${scope}`;
   window.location.href = url;
 }
- 
+
 async function exchangeCode(code) {
   try {
     const res = await fetch('/api/strava-token', {
@@ -70,7 +70,7 @@ async function exchangeCode(code) {
     showConnect();
   }
 }
- 
+
 function disconnect() {
   localStorage.removeItem('strava_token');
   localStorage.removeItem('strava_athlete');
@@ -78,7 +78,7 @@ function disconnect() {
   state.accessToken = null; state.athlete = null; state.activities = [];
   showConnect();
 }
- 
+
 // ─── SHOW/HIDE ─────────────────────────────────────────────────────────────────
 function showConnect() {
   document.getElementById('connect-state').style.display = 'flex';
@@ -87,7 +87,7 @@ function showConnect() {
   document.getElementById('disconnect-btn').style.display = 'none';
   document.getElementById('athlete-pill').style.display = 'none';
 }
- 
+
 function showDashboard() {
   document.getElementById('connect-state').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
@@ -102,7 +102,7 @@ function showDashboard() {
   renderWeightChart();
   updateTargets();
 }
- 
+
 // ─── STRAVA ACTIVITIES ────────────────────────────────────────────────────────
 async function loadActivities() {
   if (!state.accessToken) return;
@@ -123,11 +123,11 @@ async function loadActivities() {
     console.error('Strava fetch error:', e);
   }
 }
- 
+
 function renderActivities() {
   const recent = state.activities.slice(0, 5);
   const all = state.activities.slice(0, 15);
- 
+
   const buildItem = a => {
     const dist = (a.distance / 1609.34).toFixed(1);
     const elev = Math.round(a.total_elevation_gain * 3.28084);
@@ -145,7 +145,7 @@ function renderActivities() {
       </div>
     </div>`;
   };
- 
+
   const recentEl = document.getElementById('recent-rides-list');
   const allEl = document.getElementById('all-rides-list');
   if (recent.length === 0) {
@@ -156,13 +156,13 @@ function renderActivities() {
     allEl.innerHTML = all.map(buildItem).join('');
   }
 }
- 
+
 function updateOverviewMetrics() {
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const thisWeek = state.activities.filter(a => new Date(a.start_date_local).getTime() > weekAgo);
   const totalDist = thisWeek.reduce((s, a) => s + a.distance, 0);
   const totalElev = thisWeek.reduce((s, a) => s + a.total_elevation_gain, 0);
- 
+
   document.getElementById('ov-rides').textContent = thisWeek.length;
   document.getElementById('ov-distance').textContent = (totalDist / 1609.34).toFixed(0);
   document.getElementById('ov-elevation').textContent = Math.round(totalElev * 3.28084).toLocaleString();
@@ -170,7 +170,7 @@ function updateOverviewMetrics() {
   const lost = Math.max(0, 200 - state.currentWeight);
   document.getElementById('ov-to-goal').innerHTML = (10 - lost).toFixed(1) + '<span class="metric-unit">lbs</span>';
 }
- 
+
 function updateTargets() {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
@@ -178,9 +178,9 @@ function updateTargets() {
   const yesterdayStr = new Date(today - 86400000).toISOString().split('T')[0];
   const yesterdayRide = state.activities.find(a => a.start_date_local.startsWith(yesterdayStr));
   const activeRide = todayRide || yesterdayRide;
- 
+
   let cal, protein, carbs, fat, rideType;
- 
+
   if (activeRide) {
     const dist = activeRide.distance / 1609.34;
     if (dist > 60) {
@@ -197,18 +197,17 @@ function updateTargets() {
     cal = 2200; protein = 175; carbs = 200; fat = 65;
     rideType = 'Rest / recovery day';
   }
- 
+
   window._targets = { cal, protein, carbs, fat };
- 
+
   document.getElementById('t-cal').textContent = cal.toLocaleString() + ' kcal';
   document.getElementById('t-protein').textContent = protein + 'g';
   document.getElementById('t-carbs').textContent = carbs + 'g';
   document.getElementById('t-fat').textContent = fat + 'g';
   document.getElementById('t-ridetype').textContent = rideType;
-  document.getElementById('cal-target').value = cal;
   renderMacroBars();
 }
- 
+
 function renderTrainingChart() {
   const days = [];
   const distances = [];
@@ -220,7 +219,7 @@ function renderTrainingChart() {
     const dayRides = state.activities.filter(a => a.start_date_local.startsWith(ds));
     distances.push(+(dayRides.reduce((s, a) => s + a.distance / 1609.34, 0)).toFixed(1));
   }
- 
+
   const ctx = document.getElementById('trainingChart').getContext('2d');
   if (state.trainingChart) state.trainingChart.destroy();
   state.trainingChart = new Chart(ctx, {
@@ -245,14 +244,14 @@ function renderTrainingChart() {
     }
   });
 }
- 
+
 // ─── NUTRITION ────────────────────────────────────────────────────────────────
 const DEFAULT_TARGETS = { cal: 2680, protein: 175, carbs: 295, fat: 65 };
- 
+
 function getTargets() {
   return window._targets || DEFAULT_TARGETS;
 }
- 
+
 function renderMacroBars() {
   const t = getTargets();
   const totals = getMealTotals();
@@ -275,14 +274,14 @@ function renderMacroBars() {
   document.getElementById('logged-cals').textContent = Math.round(totals.cal).toLocaleString();
   document.getElementById('remaining-cals').textContent = remaining.toLocaleString();
 }
- 
+
 function getMealTotals() {
   return state.meals.reduce((a, m) => ({
     cal: a.cal + m.cal, protein: a.protein + m.protein,
     carbs: a.carbs + m.carbs, fat: a.fat + m.fat
   }), { cal: 0, protein: 0, carbs: 0, fat: 0 });
 }
- 
+
 function renderMealLog() {
   const el = document.getElementById('meal-log-list');
   if (state.meals.length === 0) {
@@ -300,13 +299,13 @@ function renderMealLog() {
       </div>
     </div>`).join('');
 }
- 
+
 function removeMeal(i) {
   state.meals.splice(i, 1);
   localStorage.setItem('meals_today', JSON.stringify(state.meals));
   renderMealLog(); renderMacroBars();
 }
- 
+
 // ─── MEAL PHOTO ANALYSIS ──────────────────────────────────────────────────────
 function handleMealFile(input) {
   const file = input.files[0]; if (!file) return;
@@ -321,25 +320,25 @@ function handleMealFile(input) {
   };
   reader.readAsDataURL(file);
 }
- 
+
 async function analyzeMeal() {
   if (!state.b64Image) return;
   const notes = document.getElementById('meal-notes').value;
   const t = getTargets();
   document.getElementById('analyze-btn').style.display = 'none';
   document.getElementById('meal-loading').style.display = 'block';
- 
+
   const prompt = `You are a sports nutrition expert for endurance athletes. Analyze this meal photo.
- 
+
 Athlete: 47yo male road cyclist, 200 lbs, 6'3". Goal: body recomposition (lose fat, gain muscle). Target 190 lbs by June 20 2026. Training 5-6 days/week.
 Today's targets: ${t.cal} kcal, ${t.protein}g protein, ${t.carbs}g carbs, ${t.fat}g fat.
 ${notes ? 'User notes: ' + notes : ''}
- 
+
 Respond ONLY with valid JSON (no markdown, no explanation):
 {"meal_name":"short name","calories":number,"protein_g":number,"carbs_g":number,"fat_g":number,"quality_score":number,"highlights":["positive 1","positive 2"],"improvements":["improvement 1","improvement 2"],"cycling_note":"one sentence on fit with training"}`;
- 
+
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -355,7 +354,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     const text = data.content.map(c => c.text || '').join('');
     const meal = JSON.parse(text.replace(/```json|```/g, '').trim());
     state.pendingMeal = meal;
- 
+
     const scoreColor = meal.quality_score >= 7 ? '#4ade80' : meal.quality_score >= 5 ? '#fbbf24' : '#f87171';
     document.getElementById('meal-result').innerHTML = `
       <div class="meal-result-card">
@@ -381,7 +380,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
   }
   document.getElementById('meal-loading').style.display = 'none';
 }
- 
+
 function addMealToLog() {
   if (!state.pendingMeal) return;
   const m = state.pendingMeal;
@@ -396,7 +395,7 @@ function addMealToLog() {
   document.getElementById('meal-file').value = '';
   renderMealLog(); renderMacroBars();
 }
- 
+
 // ─── WEIGHT LOG ───────────────────────────────────────────────────────────────
 function logWeight() {
   const val = parseFloat(document.getElementById('weight-input').value);
@@ -414,7 +413,7 @@ function logWeight() {
   updateOverviewMetrics();
   renderWeightChart();
 }
- 
+
 function renderWeightChart() {
   const today = new Date();
   const labels = [], goalLine = [];
@@ -424,7 +423,7 @@ function renderWeightChart() {
     goalLine.push(+(200 - (10 / 13) * i).toFixed(1));
   }
   const actualData = [state.currentWeight, ...state.weightLog.slice(-12).map(w => w.weight)];
- 
+
   const ctx = document.getElementById('weightChart').getContext('2d');
   if (state.weightChart) state.weightChart.destroy();
   state.weightChart = new Chart(ctx, {
@@ -446,7 +445,7 @@ function renderWeightChart() {
     }
   });
 }
- 
+
 // ─── AI INSIGHT ───────────────────────────────────────────────────────────────
 async function getInsight() {
   document.getElementById('ai-insight-box').innerHTML = '<div class="loading-msg">Generating coaching insight...</div>';
@@ -457,18 +456,18 @@ async function getInsight() {
   const avgPower = thisWeek.filter(a => a.average_watts).reduce((s, a, _, arr) => s + a.average_watts / arr.length, 0);
   const t = getTargets();
   const totals = getMealTotals();
- 
+
   const prompt = `You are a cycling coach and sports nutritionist. Give a concise, practical daily coaching insight (3-4 sentences max).
- 
+
 Athlete: 47yo male road cyclist, ${state.currentWeight} lbs (goal: 190 lbs by Jun 20, 2026). Body recomposition goal.
 This week: ${thisWeek.length} rides, ${totalMiles} miles, ${totalElev.toLocaleString()} ft elevation${avgPower > 0 ? ', avg power ' + Math.round(avgPower) + 'w' : ''}.
 Today's nutrition target: ${t.cal} kcal, ${t.protein}g protein, ${t.carbs}g carbs.
 Today's logged: ${Math.round(totals.cal)} kcal, ${Math.round(totals.protein)}g protein so far.
- 
+
 Give one specific, actionable insight for today based on this data. Be direct and practical, like a real coach.`;
- 
+
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -484,7 +483,7 @@ Give one specific, actionable insight for today based on this data. Be direct an
     document.getElementById('ai-insight-box').innerHTML = '<button class="insight-btn" onclick="getInsight()">Generate today\'s coaching insight ↗</button>';
   }
 }
- 
+
 // ─── UI HELPERS ───────────────────────────────────────────────────────────────
 function switchTab(name, btn) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -492,15 +491,14 @@ function switchTab(name, btn) {
   document.getElementById('panel-' + name).classList.add('active');
   btn.classList.add('active');
 }
- 
+
 function updateDaysLeft() {
   const days = Math.max(0, Math.ceil((new Date('2026-06-20') - new Date()) / 86400000));
   document.getElementById('ov-days').innerHTML = days + '<span class="metric-unit">days</span>';
 }
- 
+
 function formatDuration(seconds) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
- 
