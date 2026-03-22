@@ -404,12 +404,19 @@ textarea:focus { outline: none; border-color: var(--accent); }
 }
 
 /* TRAINING PLAN */
+.plan-week-label {
+  font-size: 11px;
+  font-family: 'DM Mono', monospace;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 16px 0 6px;
+}
 .plan-calendar {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
-  margin-bottom: 16px;
-  overflow-x: auto;
+  margin-bottom: 8px;
 }
 .plan-day {
   background: var(--bg3);
@@ -474,5 +481,5 @@ textarea:focus { outline: none; border-color: var(--accent); }
   margin-bottom: 6px;
 }
 @media (max-width: 640px) {
-  .plan-calendar { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .plan-calendar { grid-template-columns: repeat(7, minmax(0,1fr)); font-size: 11px; }
 }
