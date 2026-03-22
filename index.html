@@ -49,6 +49,7 @@
       <button class="tab" data-tab="nutrition" onclick="switchTab('nutrition', this)">Nutrition</button>
       <button class="tab" data-tab="rides" onclick="switchTab('rides', this)">Rides</button>
       <button class="tab" data-tab="goals" onclick="switchTab('goals', this)">Goals</button>
+      <button class="tab" data-tab="training" onclick="switchTab('training', this)">Training Plan</button>
     </div>
 
     <!-- OVERVIEW -->
@@ -199,6 +200,12 @@
         <div style="position:relative; height:220px; width:100%">
           <canvas id="weightChart"></canvas>
         </div>
+      </div>
+    </div>
+    <!-- TRAINING PLAN -->
+    <div class="panel" id="panel-training">
+      <div class="section-card" id="training-plan-panel">
+        <div class="loading-msg">Loading training plan from TrainingPeaks...</div>
       </div>
     </div>
   </div>
