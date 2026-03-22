@@ -9,17 +9,31 @@ const ATHLETE_PROFILE = {
 };
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
+const ATHLETE_CONFIG = {
+  currentFTP: 268,
+  targetFTP: 325,
+  tripDate: '2026-06-27',
+  tripName: 'Alps 2026',
+  tripDescription: 'Multi-day Alpine cycling trip. Key climbs: Col de Finestre (18.5km, 9.1%), Col du Galibier (8.6km, 6.9%), Colle del Nivolet (64km, 2350m), Col Agnel (2200m), Col de la Madeleine (19.5km, 8%). Goal: move from back to front of group on long climbs.',
+  weightLbs: 200,
+  targetWeightLbs: 190,
+  targetDate: '2026-06-20'
+};
+
 let state = {
   accessToken: localStorage.getItem('strava_token'),
   athlete: JSON.parse(localStorage.getItem('strava_athlete') || 'null'),
   activities: JSON.parse(localStorage.getItem('strava_activities') || '[]'),
+  trainingPlan: JSON.parse(localStorage.getItem('training_plan') || '[]'),
   meals: JSON.parse(localStorage.getItem('meals_today') || '[]'),
   weightLog: JSON.parse(localStorage.getItem('weight_log') || '[]'),
   currentWeight: parseFloat(localStorage.getItem('current_weight') || '200'),
+  currentFTP: parseFloat(localStorage.getItem('current_ftp') || '268'),
   b64Image: null,
   pendingMeal: null,
   weightChart: null,
-  trainingChart: null
+  trainingChart: null,
+  ftpChart: null
 };
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
@@ -38,6 +52,7 @@ window.addEventListener('load', async () => {
   }
   updateDaysLeft();
   checkForWebhookWeight();
+  await loadTrainingPlan();
 });
 
 // ─── STRAVA OAUTH ─────────────────────────────────────────────────────────────
@@ -541,4 +556,226 @@ function formatDuration(seconds) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// ─── TRAINING PLAN ────────────────────────────────────────────────────────────
+async function loadTrainingPlan() {
+  try {
+    const res = await fetch('/api/training-plan');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.events) {
+      state.trainingPlan = data.events;
+      localStorage.setItem('training_plan', JSON.stringify(data.events));
+      renderTrainingPlan();
+      updateTargetsFromPlan();
+    }
+  } catch(e) { console.error('Training plan fetch error:', e); }
+}
+
+function getTodayStr() { return localDateStr(new Date()); }
+function getTomorrowStr() { const d = new Date(); d.setDate(d.getDate()+1); return localDateStr(d); }
+
+function getWorkoutsForDate(dateStr) {
+  return state.trainingPlan.filter(w => w.date === dateStr);
+}
+
+function isMissed(workout) {
+  const today = getTodayStr();
+  if (workout.date >= today) return false;
+  const completed = state.activities.some(a => {
+    const aDate = a.start_date_local.split('T')[0];
+    return aDate === workout.date && (workout.type === 'strength' || a.distance > 1000);
+  });
+  return !completed;
+}
+
+function updateTargetsFromPlan() {
+  const tomorrow = getWorkoutsForDate(getTomorrowStr());
+  const today = getWorkoutsForDate(getTodayStr());
+  const relevant = tomorrow.length > 0 ? tomorrow : today;
+
+  if (relevant.length === 0) return;
+  const workout = relevant[0];
+
+  let cal, protein, carbs, fat, rideType;
+  const tss = workout.tss || 0;
+
+  if (workout.type === 'rest') {
+    cal = 2200; protein = 175; carbs = 180; fat = 65;
+    rideType = 'Rest day';
+  } else if (workout.type === 'strength') {
+    cal = 2400; protein = 195; carbs = 220; fat = 70;
+    rideType = 'Strength training';
+  } else if (workout.type === 'intervals' || tss > 80) {
+    cal = 2950; protein = 175; carbs = 370; fat = 70;
+    rideType = `Hard intervals${tss ? ' (TSS ~' + tss + ')' : ''}`;
+  } else if (workout.type === 'tempo' || tss > 50) {
+    cal = 2750; protein = 175; carbs = 310; fat = 68;
+    rideType = `Tempo ride${tss ? ' (TSS ~' + tss + ')' : ''}`;
+  } else {
+    cal = 2580; protein = 175; carbs = 280; fat = 65;
+    rideType = `Endurance ride${tss ? ' (TSS ~' + tss + ')' : ''}`;
+  }
+
+  window._targets = { cal, protein, carbs, fat };
+  document.getElementById('t-cal').textContent = cal.toLocaleString() + ' kcal';
+  document.getElementById('t-protein').textContent = protein + 'g';
+  document.getElementById('t-carbs').textContent = carbs + 'g';
+  document.getElementById('t-fat').textContent = fat + 'g';
+  document.getElementById('t-ridetype').textContent = (tomorrow.length > 0 ? 'Tomorrow: ' : 'Today: ') + rideType;
+  renderMacroBars();
+}
+
+function renderTrainingPlan() {
+  const el = document.getElementById('training-plan-panel');
+  if (!el) return;
+
+  const today = getTodayStr();
+  const days = [];
+  for (let i = -1; i <= 13; i++) {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    days.push(localDateStr(d));
+  }
+
+  const missed = state.trainingPlan.filter(w => isMissed(w));
+
+  let html = '';
+
+  if (missed.length > 0) {
+    html += `<div class="missed-banner">
+      <span style="color:#fbbf24; font-weight:500;">⚠ ${missed.length} missed workout${missed.length>1?'s':''} detected</span>
+      <button class="insight-btn" style="margin-left:12px; font-size:11px; padding:4px 10px;" onclick="getMissedWorkoutAdvice()">Get adjustment advice ↗</button>
+    </div>`;
+  }
+
+  html += '<div class="plan-calendar">';
+  for (const dateStr of days) {
+    const workouts = getWorkoutsForDate(dateStr);
+    const isToday = dateStr === today;
+    const isPast = dateStr < today;
+    const d = new Date(dateStr + 'T12:00:00');
+    const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+    const completedOnDay = state.activities.some(a => a.start_date_local.startsWith(dateStr));
+
+    html += `<div class="plan-day ${isToday ? 'plan-day-today' : ''} ${isPast ? 'plan-day-past' : ''}">
+      <div class="plan-day-label">${isToday ? 'TODAY' : dayLabel}</div>`;
+
+    if (workouts.length === 0) {
+      html += `<div class="plan-workout plan-rest">Rest</div>`;
+    } else {
+      for (const w of workouts) {
+        const missed = isMissed(w);
+        const done = isPast && completedOnDay;
+        const typeColor = { intervals:'#e8ff47', tempo:'#60a5fa', endurance:'#4ade80', strength:'#f87171', rest:'#5a5955', ride:'#4ade80', test:'#fbbf24' }[w.type] || '#9a9994';
+        html += `<div class="plan-workout" style="border-left: 2px solid ${typeColor}; ${missed ? 'opacity:0.5' : ''}">
+          <div style="font-size:12px; font-weight:500; color:${typeColor};">${w.type.toUpperCase()}${done ? ' ✓' : missed ? ' ✗' : ''}</div>
+          <div style="font-size:12px; color:#f0f0ee; margin-top:2px;">${w.title}</div>
+          ${w.tss ? `<div style="font-size:11px; color:#5a5955; margin-top:2px;">TSS ~${w.tss}</div>` : ''}
+          ${w.duration ? `<div style="font-size:11px; color:#5a5955;">${w.duration}hr</div>` : ''}
+        </div>`;
+      }
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  html += `<div style="margin-top:16px;">
+    <div class="section-head">FTP progression</div>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px;">
+      <div class="metric" style="background:var(--bg3)">
+        <div class="metric-label">Current FTP</div>
+        <div style="font-size:22px; font-weight:300;">${state.currentFTP}<span style="font-size:12px; color:#5a5955;"> W</span></div>
+      </div>
+      <div class="metric" style="background:var(--bg3)">
+        <div class="metric-label">Target FTP</div>
+        <div style="font-size:22px; font-weight:300;">325<span style="font-size:12px; color:#5a5955;"> W</span></div>
+      </div>
+      <div class="metric" style="background:var(--bg3)">
+        <div class="metric-label">W/kg now → goal</div>
+        <div style="font-size:22px; font-weight:300;">${(state.currentFTP/90.7).toFixed(2)}<span style="font-size:12px; color:#5a5955;"> → 3.77</span></div>
+      </div>
+    </div>
+    <div style="margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; font-size:11px; color:#5a5955; font-family:DM Mono,monospace; margin-bottom:4px;">
+        <span>260W (start)</span><span>325W (Alps goal)</span>
+      </div>
+      <div style="height:6px; background:var(--bg3); border-radius:3px; overflow:hidden;">
+        <div style="height:100%; border-radius:3px; background:#e8ff47; width:${Math.min(100,Math.round(((state.currentFTP-260)/(325-260))*100))}%; transition:width 0.5s;"></div>
+      </div>
+      <div style="font-size:11px; color:#5a5955; margin-top:4px; font-family:DM Mono,monospace;">${Math.round(state.currentFTP-260)} of 65W gained · ${Math.round(325-state.currentFTP)}W to go</div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
+      <input type="number" id="ftp-input" placeholder="Log new FTP (W)" min="100" max="500" style="flex:1; background:var(--bg3); color:var(--text); border:0.5px solid rgba(255,255,255,0.12); border-radius:6px; padding:8px 12px; font-size:13px; font-family:DM Sans,sans-serif;">
+      <button class="action-btn" style="width:auto;" onclick="logFTP()">Log FTP</button>
+    </div>
+  </div>`;
+
+  el.innerHTML = html;
+}
+
+function logFTP() {
+  const val = parseFloat(document.getElementById('ftp-input').value);
+  if (isNaN(val) || val < 100 || val > 500) return;
+  state.currentFTP = val;
+  localStorage.setItem('current_ftp', val);
+  document.getElementById('ftp-input').value = '';
+  renderTrainingPlan();
+}
+
+async function getMissedWorkoutAdvice() {
+  const missed = state.trainingPlan.filter(w => isMissed(w));
+  const upcoming = state.trainingPlan.filter(w => w.date >= getTodayStr()).slice(0, 7);
+  const weekAgo = Date.now() - 7*24*60*60*1000;
+  const recentRides = state.activities.filter(a => new Date(a.start_date_local).getTime() > weekAgo);
+  const daysToTrip = Math.ceil((new Date(ATHLETE_CONFIG.tripDate) - new Date()) / 86400000);
+
+  const prompt = `You are an expert cycling coach. An athlete has missed some planned workouts and needs schedule adjustment advice.
+
+Athlete profile:
+- 47yo male road cyclist, ${state.currentWeight} lbs (goal 190 lbs)
+- Current FTP: ${state.currentFTP}W, target: 325W by June 27
+- Trip: ${ATHLETE_CONFIG.tripName} in ${daysToTrip} days — ${ATHLETE_CONFIG.tripDescription}
+- Training availability: Mon rest, Tue/Fri weights, Wed/Thu 1.5hr morning rides, Sat/Sun longer rides
+- Weekly hours: 6-12hrs
+
+Missed workouts (${missed.length}):
+${missed.map(w => `- ${w.date}: ${w.title} (${w.type}${w.tss ? ', TSS '+w.tss : ''})`).join('\n')}
+
+Recent completed rides this week:
+${recentRides.map(a => `- ${a.start_date_local.split('T')[0]}: ${a.name}, ${(a.distance/1609.34).toFixed(1)}mi${a.average_watts ? ', '+Math.round(a.average_watts)+'W avg' : ''}`).join('\n')}
+
+Upcoming planned workouts (next 7 days):
+${upcoming.map(w => `- ${w.date}: ${w.title} (${w.type}${w.tss ? ', TSS '+w.tss : ''})`).join('\n')}
+
+Give specific, practical advice in 4-6 sentences:
+1. Whether to try to make up the missed sessions or skip them
+2. Any adjustments to the upcoming week
+3. How this affects the FTP target timeline
+Be direct and coach-like. Don't sugarcoat.`;
+
+  const btn = event.target;
+  btn.textContent = 'Analyzing...';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 400, messages: [{ role: 'user', content: prompt }] })
+    });
+    const data = await res.json();
+    const text = data.content.map(c => c.text || '').join('');
+
+    const banner = document.querySelector('.missed-banner');
+    if (banner) {
+      banner.insertAdjacentHTML('afterend', `<div class="section-card" style="margin-bottom:16px; border-color:rgba(251,191,36,0.3);">
+        <div class="section-head" style="color:#fbbf24;">Schedule adjustment advice</div>
+        <div class="insight-text">${text}</div>
+      </div>`);
+    }
+  } catch(e) { console.error(e); }
+  btn.textContent = 'Get adjustment advice ↗';
+  btn.disabled = false;
 }
