@@ -131,7 +131,7 @@ function renderActivities() {
   const buildItem = a => {
     const dist = (a.distance / 1609.34).toFixed(1);
     const elev = Math.round(a.total_elevation_gain * 3.28084);
-    const date = new Date(a.start_date_local).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const [_dp, _] = a.start_date_local.split('T'); const [_yr, _mo, _dy] = _dp.split('-').map(Number); const date = new Date(_yr, _mo - 1, _dy).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const dur = formatDuration(a.moving_time);
     const power = a.average_watts ? `${Math.round(a.average_watts)}w avg` : '';
     return `<div class="ride-item">
@@ -171,11 +171,18 @@ function updateOverviewMetrics() {
   document.getElementById('ov-to-goal').innerHTML = (10 - lost).toFixed(1) + '<span class="metric-unit">lbs</span>';
 }
 
+function localDateStr(d) {
+  const yr = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  return `${yr}-${mo}-${dy}`;
+}
+
 function updateTargets() {
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
+  const todayStr = localDateStr(today);
   const todayRide = state.activities.find(a => a.start_date_local.startsWith(todayStr));
-  const yesterdayStr = new Date(today - 86400000).toISOString().split('T')[0];
+  const yesterdayStr = localDateStr(new Date(today - 86400000));
   const yesterdayRide = state.activities.find(a => a.start_date_local.startsWith(yesterdayStr));
   const activeRide = todayRide || yesterdayRide;
 
@@ -214,7 +221,7 @@ function renderTrainingChart() {
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const ds = d.toISOString().split('T')[0];
+    const ds = localDateStr(d);
     days.push(d.toLocaleDateString('en-US', { weekday: 'short' }));
     const dayRides = state.activities.filter(a => a.start_date_local.startsWith(ds));
     distances.push(+(dayRides.reduce((s, a) => s + a.distance / 1609.34, 0)).toFixed(1));
