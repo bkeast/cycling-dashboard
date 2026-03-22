@@ -413,17 +413,24 @@ textarea:focus { outline: none; border-color: var(--accent); }
   margin: 16px 0 6px;
 }
 .plan-calendar {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 8px;
+  display: grid !important;
+  grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+  gap: 6px;
   margin-bottom: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.plan-calendar .plan-day {
+  min-width: 0;
+  overflow: hidden;
 }
 .plan-day {
   background: var(--bg3);
   border-radius: var(--radius-sm);
-  padding: 10px;
-  min-width: 110px;
+  padding: 8px 6px;
+  min-width: 0;
   border: 0.5px solid var(--border);
+  word-break: break-word;
 }
 .plan-day-today {
   border-color: var(--accent);
@@ -481,5 +488,5 @@ textarea:focus { outline: none; border-color: var(--accent); }
   margin-bottom: 6px;
 }
 @media (max-width: 640px) {
-  .plan-calendar { grid-template-columns: repeat(7, minmax(0,1fr)); font-size: 11px; }
+  .plan-calendar { grid-template-columns: repeat(7, minmax(0, 1fr)) !important; }
 }
