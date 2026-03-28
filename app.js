@@ -26,6 +26,8 @@ let state = {
   activities: JSON.parse(localStorage.getItem('strava_activities') || '[]'),
   trainingPlan: JSON.parse(localStorage.getItem('training_plan') || '[]'),
   meals: JSON.parse(localStorage.getItem('meals_today') || '[]'),
+  mealHistory: JSON.parse(localStorage.getItem('meal_history') || '{}'),
+  viewingDate: null,
   weightLog: JSON.parse(localStorage.getItem('weight_log') || '[]'),
   currentWeight: parseFloat(localStorage.getItem('current_weight') || '200'),
   todaySteps: parseInt(localStorage.getItem('today_steps') || '0'),
@@ -194,29 +196,66 @@ function updateOverviewMetrics() {
   updateCalorieSummary();
 }
 
-function updateCalorieSummary() {
-  const basal = calcBasalCalories();
-  const active = state.todayActiveCalories || 0;
-  const workout = calcWorkoutCalories();
-  const total = basal + active + workout;
-  const eaten = getMealTotals().cal;
-  const net = Math.round(eaten - total);
-  const netColor = net < -600 ? '#f87171' : net < 0 ? '#4ade80' : net < 300 ? '#fbbf24' : '#f87171';
-
+async function showCaloriesForDate(dateStr) {
+  state.viewingDate = dateStr;
   const el = document.getElementById('calorie-summary');
   if (!el) return;
+
+  const today = localDateStr(new Date());
+  const isToday = dateStr === today;
+
+  const basal = calcBasalCalories();
+  const workout = calcWorkoutCaloriesForDate(dateStr);
+
+  let active = 0;
+  if (isToday) {
+    active = state.todayActiveCalories || 0;
+  } else {
+    try {
+      const r = await fetch('/api/activity?date=' + dateStr);
+      if (r.ok) { const d = await r.json(); active = d.active_calories || 0; }
+    } catch(e) {}
+  }
+
+  const meals = isToday ? state.meals : (state.mealHistory[dateStr] || []);
+  const eaten = meals.reduce((s, m) => s + m.cal, 0);
+  const total = basal + active + workout;
+  const net = Math.round(eaten - total);
+  const netColor = net < -600 ? '#f87171' : net < 0 ? '#4ade80' : net < 300 ? '#fbbf24' : '#f87171';
+  const dateLabel = dateStr === today ? 'Today' : new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
   el.innerHTML =
+    '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">' +
+      '<div style="display:flex; gap:6px; align-items:center;">' +
+        '<button onclick="changeCalDate(-1)" style="background:none;border:0.5px solid var(--border2);border-radius:4px;color:var(--text2);padding:2px 8px;cursor:pointer;font-size:13px;">‹</button>' +
+        '<span style="font-size:12px; font-family:DM Mono,monospace; color:var(--text2); min-width:110px; text-align:center;">' + dateLabel + '</span>' +
+        '<button onclick="changeCalDate(1)" style="background:none;border:0.5px solid var(--border2);border-radius:4px;color:var(--text2);padding:2px 8px;cursor:pointer;font-size:13px;" ' + (isToday ? 'disabled' : '') + '>›</button>' +
+      '</div>' +
+    '</div>' +
     '<div class="cal-breakdown">' +
       '<div class="cal-row"><span>Basal (BMR)</span><span>' + basal.toLocaleString() + ' kcal</span></div>' +
-      '<div class="cal-row"><span>Active (walking)</span><span>' + active.toLocaleString() + ' kcal</span></div>' +
-      '<div class="cal-row"><span>Workout</span><span>' + workout.toLocaleString() + ' kcal</span></div>' +
+      '<div class="cal-row"><span>Active (walking)</span><span>' + (active || '—') + (active ? ' kcal' : '') + '</span></div>' +
+      '<div class="cal-row"><span>Workout</span><span>' + (workout || '—') + (workout ? ' kcal' : '') + '</span></div>' +
       '<div class="cal-row cal-total"><span>Total burn</span><span>' + total.toLocaleString() + ' kcal</span></div>' +
       '<div class="cal-row cal-total"><span>Eaten</span><span>' + Math.round(eaten).toLocaleString() + ' kcal</span></div>' +
-      '<div class="cal-row" style="border-top: 1px solid rgba(255,255,255,0.1); margin-top:4px; padding-top:8px;">' +
+      '<div class="cal-row" style="border-top:1px solid rgba(255,255,255,0.1);margin-top:4px;padding-top:8px;">' +
         '<span style="font-weight:500;">Net balance</span>' +
-        '<span style="color:' + netColor + '; font-weight:500;">' + (net > 0 ? '+' : '') + net.toLocaleString() + ' kcal</span>' +
+        '<span style="color:' + netColor + ';font-weight:500;">' + (net > 0 ? '+' : '') + net.toLocaleString() + ' kcal</span>' +
       '</div>' +
     '</div>';
+}
+
+function changeCalDate(delta) {
+  const current = state.viewingDate || localDateStr(new Date());
+  const d = new Date(current + 'T12:00:00');
+  d.setDate(d.getDate() + delta);
+  const newDate = localDateStr(d);
+  const today = localDateStr(new Date());
+  if (newDate <= today) showCaloriesForDate(newDate);
+}
+
+function updateCalorieSummary() {
+  showCaloriesForDate(state.viewingDate || localDateStr(new Date()));
 }
 
 function calcBasalCalories() {
@@ -226,22 +265,20 @@ function calcBasalCalories() {
   return Math.round(10 * w + 6.25 * h - 5 * a + 5);
 }
 
-function calcWorkoutCalories() {
-  const today = localDateStr(new Date());
-  const todayRides = state.activities.filter(a => a.start_date_local.startsWith(today));
+function calcWorkoutCaloriesForDate(dateStr) {
+  const rides = state.activities.filter(a => a.start_date_local.startsWith(dateStr));
   let cal = 0;
-  for (const ride of todayRides) {
+  for (const ride of rides) {
     if (ride.kilojoules) cal += Math.round(ride.kilojoules * 0.239);
     else if (ride.average_watts && ride.moving_time) cal += Math.round(ride.average_watts * ride.moving_time / 1000 * 0.239);
   }
-  const tp = state.trainingPlan.filter(w => w.date === today && w.type === 'strength');
-  for (const s of tp) {
-    const hrs = s.duration || 1;
-    cal += Math.round(hrs * 300);
-  }
-  state.todayWorkoutCalories = cal;
+  const tp = state.trainingPlan.filter(w => w.date === dateStr && w.type === 'strength');
+  for (const s of tp) { cal += Math.round((s.duration || 1) * 300); }
+  if (dateStr === localDateStr(new Date())) state.todayWorkoutCalories = cal;
   return cal;
 }
+
+function calcWorkoutCalories() { return calcWorkoutCaloriesForDate(localDateStr(new Date())); }
 
 function localDateStr(d) {
   const yr = d.getFullYear();
@@ -382,6 +419,9 @@ function renderMealLog() {
 function removeMeal(i) {
   state.meals.splice(i, 1);
   localStorage.setItem('meals_today', JSON.stringify(state.meals));
+  const today = localDateStr(new Date());
+  state.mealHistory[today] = [...state.meals];
+  localStorage.setItem('meal_history', JSON.stringify(state.mealHistory));
   renderMealLog(); renderMacroBars(); updateCalorieSummary();
 }
 
@@ -463,8 +503,13 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 function addMealToLog() {
   if (!state.pendingMeal) return;
   const m = state.pendingMeal;
-  state.meals.push({ name: m.meal_name, cal: m.calories, protein: m.protein_g, carbs: m.carbs_g, fat: m.fat_g });
+  const entry = { name: m.meal_name, cal: m.calories, protein: m.protein_g, carbs: m.carbs_g, fat: m.fat_g };
+  state.meals.push(entry);
   localStorage.setItem('meals_today', JSON.stringify(state.meals));
+  const today = localDateStr(new Date());
+  if (!state.mealHistory[today]) state.mealHistory[today] = [];
+  state.mealHistory[today] = [...state.meals];
+  localStorage.setItem('meal_history', JSON.stringify(state.mealHistory));
   state.pendingMeal = null; state.b64Image = null;
   document.getElementById('meal-preview').style.display = 'none';
   document.getElementById('meal-result').innerHTML = '';
