@@ -1,0 +1,7 @@
+{
+  "name": "cycling-dashboard",
+  "version": "1.0.0",
+  "dependencies": {
+    "@vercel/blob": "^0.24.0"
+  }
+}
