@@ -1,9 +1,9 @@
-const weights = [];
+import { put, get } from '@vercel/blob';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -16,7 +16,6 @@ export default async function handler(req, res) {
 
     let lbs = weight_lbs;
     if (!lbs && weight_kg) lbs = (parseFloat(weight_kg) * 2.20462).toFixed(1);
-
     if (!lbs || isNaN(parseFloat(lbs))) {
       return res.status(400).json({ error: 'Invalid weight value' });
     }
@@ -27,15 +26,47 @@ export default async function handler(req, res) {
       recorded_at: new Date().toISOString()
     };
 
-    weights.unshift(entry);
-    if (weights.length > 30) weights.pop();
+    // Load existing log
+    let log = [];
+    try {
+      const existing = await get('weight-log.json');
+      if (existing) {
+        const text = await existing.text();
+        log = JSON.parse(text);
+      }
+    } catch(e) {}
+
+    // Upsert by date
+    const idx = log.findIndex(e => e.date === entry.date);
+    if (idx >= 0) log[idx] = entry;
+    else log.unshift(entry);
+    if (log.length > 90) log = log.slice(0, 90);
+
+    await put('weight-log.json', JSON.stringify(log), {
+      access: 'public',
+      contentType: 'application/json',
+      addRandomSuffix: false
+    });
 
     return res.status(200).json({ success: true, entry });
   }
 
   if (req.method === 'GET') {
-    if (weights.length === 0) return res.status(404).json({ error: 'No weight data yet' });
-    return res.status(200).json(weights[0]);
+    try {
+      const blob = await get('weight-log.json');
+      if (!blob) return res.status(404).json({ error: 'No weight data yet' });
+      const text = await blob.text();
+      const log = JSON.parse(text);
+      const date = req.query && req.query.date;
+      if (date) {
+        const entry = log.find(e => e.date === date);
+        if (!entry) return res.status(404).json({ error: 'No weight for ' + date });
+        return res.status(200).json(entry);
+      }
+      return res.status(200).json(log[0]);
+    } catch(e) {
+      return res.status(404).json({ error: 'No weight data yet' });
+    }
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
