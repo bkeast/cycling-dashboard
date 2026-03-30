@@ -1,4 +1,4 @@
-const activityData = [];
+import { put, get } from '@vercel/blob';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -21,23 +21,48 @@ export default async function handler(req, res) {
       recorded_at: new Date().toISOString()
     };
 
-    const existing = activityData.findIndex(e => e.date === entry.date);
-    if (existing >= 0) activityData[existing] = entry;
-    else activityData.unshift(entry);
-    if (activityData.length > 30) activityData.pop();
+    // Load existing log
+    let log = [];
+    try {
+      const existing = await get('activity-log.json');
+      if (existing) {
+        const text = await existing.text();
+        log = JSON.parse(text);
+      }
+    } catch(e) {}
+
+    // Upsert by date
+    const idx = log.findIndex(e => e.date === entry.date);
+    if (idx >= 0) log[idx] = entry;
+    else log.unshift(entry);
+    if (log.length > 90) log = log.slice(0, 90);
+
+    await put('activity-log.json', JSON.stringify(log), {
+      access: 'public',
+      contentType: 'application/json',
+      addRandomSuffix: false
+    });
 
     return res.status(200).json({ success: true, entry });
   }
 
   if (req.method === 'GET') {
-    const date = req.query && req.query.date;
-    if (date) {
-      const entry = activityData.find(e => e.date === date);
-      if (!entry) return res.status(404).json({ error: 'No data for ' + date });
-      return res.status(200).json(entry);
+    try {
+      const blob = await get('activity-log.json');
+      if (!blob) return res.status(404).json({ error: 'No activity data yet' });
+      const text = await blob.text();
+      const log = JSON.parse(text);
+      const date = req.query && req.query.date;
+      if (date) {
+        const entry = log.find(e => e.date === date);
+        if (!entry) return res.status(404).json({ error: 'No activity for ' + date });
+        return res.status(200).json(entry);
+      }
+      if (log.length === 0) return res.status(404).json({ error: 'No activity data yet' });
+      return res.status(200).json(log[0]);
+    } catch(e) {
+      return res.status(404).json({ error: 'No activity data yet' });
     }
-    if (activityData.length === 0) return res.status(404).json({ error: 'No activity data yet' });
-    return res.status(200).json(activityData[0]);
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
